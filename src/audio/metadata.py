@@ -1,19 +1,18 @@
-"""Извлечение метаданных аудиофайлов.
-
-Модуль отвечает только за чтение метаданных (формат, размер,
-длительность, частота дискретизации, каналы, битность).
-Поддержка WAV реализована через стандартный модуль ``wave``.
-Для сжатых форматов (MP3, FLAC, M4A и др.) зарегистрируйте
-дополнительный reader-класс в ``MetadataExtractor``.
+"""
+Извлечение метаданных аудиофайлов.
+Модуль читает заголовочную информацию (размер, длительность, частоту
+дискретизации, битность) из файла, который уже прошёл проверку
+требований.
 """
 
 from __future__ import annotations
 
 import logging
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+from tinytag import TinyTag
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +24,15 @@ class AudioMetadata:
     Объект только для чтения: после создания поля изменить нельзя.
 
     Attributes:
-        format: Формат файла (например, ``"WAV"``, ``"MP3"``).
         file_size: Размер файла в байтах.
         duration: Длительность в секундах.
         sample_rate: Частота дискретизации в герцах.
-        channels: Количество каналов (1 — моно, 2 — стерео).
         bit_depth: Битность; для сжатых форматов может быть ``None``.
     """
 
-    format: str
     file_size: int
     duration: float
     sample_rate: int
-    channels: int
     bit_depth: Optional[int]
 
     @property
@@ -59,15 +54,6 @@ class AudioMetadata:
         """Размер файла в мегабайтах."""
         return self.file_size / (1024 * 1024)
 
-    @property
-    def channel_name(self) -> str:
-        """Человекочитаемое название канальности."""
-        if self.channels == 1:
-            return "моно"
-        if self.channels == 2:
-            return "стерео"
-        return f"{self.channels} каналов"
-
 
 class MetadataReader:
     """Базовый интерфейс для чтения метаданных аудиофайла."""
@@ -85,55 +71,51 @@ class MetadataReader:
         raise NotImplementedError
 
 
-class WavMetadataReader(MetadataReader):
-    """Читает метаданные WAV через стандартный модуль ``wave``."""
+class TinyTagMetadataReader(MetadataReader):
+    """Читает метаданные через ``tinytag`` (MP3, FLAC, M4A, WAV, OGG)."""
 
     def can_read(self, path: Path) -> bool:
-        """WAV-файлы определяются по расширению ``.wav``."""
-        return path.suffix.lower() == ".wav"
+        """``tinytag`` поддерживает все форматы из требований площадки."""
+        return True  # файл уже прошёл проверку в loader
 
     def read(self, path: Path) -> AudioMetadata:
-        """Читает параметры WAV-файла.
+        """Читает параметры аудиофайла.
 
         Args:
-            path: Путь к WAV-файлу.
+            path: Путь к аудиофайлу (уже проверенному).
 
         Returns:
             Заполненный объект ``AudioMetadata``.
 
         Raises:
-            ValueError: если файл повреждён или не является WAV.
-            OSError: если файл не удаётся открыть.
+            ValueError: если файл не удаётся разобрать.
         """
         try:
-            with wave.open(str(path), "rb") as wf:
-                frames = wf.getnframes()
-                rate = wf.getframerate()
-                duration = frames / rate if rate else 0.0
-                return AudioMetadata(
-                    format="WAV",
-                    file_size=path.stat().st_size,
-                    duration=duration,
-                    sample_rate=rate,
-                    channels=wf.getnchannels(),
-                    bit_depth=wf.getsampwidth() * 8,
-                )
-        except (wave.Error, EOFError) as exc:
-            logger.error("Не удалось прочитать WAV %s: %s", path, exc)
-            raise ValueError(f"Повреждённый WAV-файл: {path}") from exc
+            tag = TinyTag.get(str(path))
+        except Exception as exc:
+            raise ValueError(f"Не удалось прочитать метаданные: {path}") from exc
+
+        return AudioMetadata(
+            file_size=path.stat().st_size,
+            duration=float(tag.duration or 0.0),
+            sample_rate=int(tag.samplerate or 0),
+            bit_depth=getattr(tag, "bitdepth", None),
+        )
 
 
 class MetadataExtractor:
-    """Фасад: выбирает подходящий reader по расширению файла."""
+    """Выбирает подходящий reader по расширению файла."""
 
     def __init__(self, readers: list[MetadataReader] | None = None) -> None:
         """Создаёт экстрактор.
 
         Args:
             readers: Список readers в порядке приоритета.
-                По умолчанию используется только ``WavMetadataReader``.
+                По умолчанию — ``TinyTagMetadataReader``.
         """
-        self._readers: list[MetadataReader] = readers or [WavMetadataReader()]
+        if readers is None:
+            readers = [TinyTagMetadataReader()]
+        self._readers = readers
 
     def extract(self, path: str | Path) -> AudioMetadata:
         """Извлекает метаданные аудиофайла.
@@ -160,6 +142,5 @@ class MetadataExtractor:
 
         logger.error("Неподдерживаемый формат: %s", path.suffix)
         raise ValueError(
-            f"Формат '{path.suffix}' не поддерживается. "
-            f"Доступны: WAV."
+            f"Формат '{path.suffix}' не поддерживается."
         )
