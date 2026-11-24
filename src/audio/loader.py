@@ -67,10 +67,9 @@ class AudioLoader:
     """Проверяет аудиофайл на соответствие требованиям и загружает его в память."""
 
     def __init__(self, supported_extensions: set[str] | frozenset[str] | None = None) -> None:
-        # Копия в frozenset: нельзя случайно изменить ни глобальную константу,
-        # ни набор, переданный снаружи, ни набор внутри экземпляра.
         source = SUPPORTED_EXTENSIONS if supported_extensions is None else supported_extensions
         self._supported = frozenset(ext.lower() for ext in source)
+
 
     def load(self, path: str | Path) -> AudioData:
         """Проверяет и загружает файл.
@@ -123,8 +122,8 @@ class AudioLoader:
     def _check_bitrate(path: Path, frames: int, sample_rate: int) -> None:
         """Проверяет средний битрейт файла.
 
-        Битрейт оценивается как размер файла / длительность, поэтому это
-        приближение: в размер входят теги, обложка и служебные данные контейнера.
+        Битрейт оценивается как размер файла / длительность, так что это
+        приблизительный результат.
         """
         duration_sec = frames / sample_rate
         bitrate_kbps = path.stat().st_size * 8 / duration_sec / 1000
