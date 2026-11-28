@@ -9,7 +9,11 @@ authors = [
     { name = "Крапивцева Анна"}
 ]
 requires-python = "==3.13.17"
-dependencies = []
+dependencies = [
+    "numpy>=2.5.5",
+    "pyloudnorm>=0.2.0",
+    "scipy>=1.18.1",
+]
 
 [project.scripts]
 project-4 = "project_4:main"
